@@ -150,6 +150,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Home />} />
             <Route path="/register" element={<Register />} />
+            {/* Add product details route for non-authenticated users */}
+            <Route path="/product/:id" element={<ProductDetails />} />
             <Route path="/admin">
               <Route index element={<AdminLogin />} />
               <Route path="login" element={<AdminLogin />} />
@@ -278,6 +280,27 @@ function App() {
           <Route path="/privacy" element={<Privacy />} />
           <Route path="/terms" element={<Terms />} />
 
+          {/* Product Details Route - Removed ProtectedRoute wrapper */}
+          <Route
+            path="/product/:id"
+            element={
+              <div className="min-h-screen bg-gray-50">
+                <Header onMenuClick={toggleSidebar} />
+                <Sidebar
+                  isOpen={sidebarOpen}
+                  onClose={() => setSidebarOpen(false)}
+                  onOpen={() => setSidebarOpen(true)}
+                />
+                <div className="lg:ml-64">
+                  <main>
+                    <ProductDetails />
+                  </main>
+                  <Footer />
+                </div>
+              </div>
+            }
+          />
+
           {/* Protected Routes */}
           <Route
             path="/account"
@@ -342,27 +365,6 @@ function App() {
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/product/:id"
-            element={
-              <ProtectedRoute>
-                <div className="min-h-screen bg-gray-50">
-                  <Header onMenuClick={toggleSidebar} />
-                  <Sidebar
-                    isOpen={sidebarOpen}
-                    onClose={() => setSidebarOpen(false)}
-                    onOpen={() => setSidebarOpen(true)}
-                  />
-                  <div className="lg:ml-64">
-                    <main>
-                      <ProductDetails />
-                    </main>
-                    <Footer />
-                  </div>
-                </div>
-              </ProtectedRoute>
-            }
-          />
 
           <Route
             path="/ebooks"
@@ -414,4 +416,3 @@ function App() {
 }
 
 export default App
-

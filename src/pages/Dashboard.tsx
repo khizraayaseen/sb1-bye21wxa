@@ -250,21 +250,8 @@ const Dashboard = () => {
   }
 
   const handleShowMeMoney = (productId: number) => {
-    const product = products.find((p: any) => p.id === productId)
-
-    // If product is locked or a top product and user is not pro, redirect to upgrade page
-    if (product && (product.is_locked || product.is_top_product) && userSubscription !== "pro") {
-      // If it has a release time in the future, still show the product details
-      if (product.release_time && new Date(product.release_time) > new Date()) {
-        navigate(`/product/${productId}`)
-      } else {
-        // Otherwise redirect to pricing page
-        navigate("/pricing")
-      }
-    } else {
-      // For unlocked products or pro users, show product details
-      navigate(`/product/${productId}`)
-    }
+    // Direct navigation with no conditions
+    navigate(`/product/${productId}`)
   }
 
   const getPaginationRange = () => {
