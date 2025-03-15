@@ -1,21 +1,35 @@
-import React, { useState } from 'react';
-import { ChevronDown, Search, MessageCircle, Shield, CreditCard, Youtube, Instagram, Facebook, BookText as TikTok, Zap } from 'lucide-react';
+"use client"
+
+import type React from "react"
+import { useState } from "react"
+import {
+  ChevronDown,
+  Search,
+  MessageCircle,
+  Shield,
+  CreditCard,
+  Youtube,
+  Instagram,
+  Facebook,
+  Zap,
+  ArrowLeft,
+} from "lucide-react"
 
 interface FAQItem {
-  question: string;
-  answer: React.ReactNode;
+  question: string
+  answer: React.ReactNode
 }
 
 interface FAQSection {
-  title: string;
-  icon: React.ElementType;
-  items: FAQItem[];
+  title: string
+  icon: React.ElementType
+  items: FAQItem[]
 }
 
 const FAQ = () => {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0])); // First section open by default
-  const [expandedQuestions, setExpandedQuestions] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("")
+  const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set([0])) // First section open by default
+  const [expandedQuestions, setExpandedQuestions] = useState<Set<string>>(new Set())
 
   const sections: FAQSection[] = [
     {
@@ -26,27 +40,35 @@ const FAQ = () => {
           question: "What is WinProd AI?",
           answer: (
             <p>
-              WinProd AI is the ultimate AI-powered platform for discovering winning products in eCommerce. Our cutting-edge technology scans and curates high-converting products, eliminating the guesswork so you can focus on scaling your business. Whether you're a dropshipper, Amazon seller, or own a Shopify store, WinProd AI provides data-driven insights, sales analytics, and exclusive tools to help you maximize profits with proven products.
+              WinProd AI is the ultimate AI-powered platform for discovering winning products in eCommerce. Our
+              cutting-edge technology scans and curates high-converting products, eliminating the guesswork so you can
+              focus on scaling your business. Whether you're a dropshipper, Amazon seller, or own a Shopify store,
+              WinProd AI provides data-driven insights, sales analytics, and exclusive tools to help you maximize
+              profits with proven products.
             </p>
-          )
+          ),
         },
         {
           question: "Can I use WinProd AI on any platform or marketplace?",
           answer: (
             <p>
-              Absolutely! WinProd AI isn't limited to any single platform. You can use it for your own Shopify store, Amazon FBA, Etsy, eBay, or any other eCommerce platform. Import and list as many products as you like—our AI ensures you're always selling products with high potential.
+              WinProd AI isn't limited to any single platform. You can use it for your own Shopify store, Amazon FBA,
+              Etsy, eBay, or any other eCommerce platform. Import and list as many products as you like—our AI ensures
+              you're always selling products with high potential.
             </p>
-          )
+          ),
         },
         {
           question: "How often are new winning products added?",
           answer: (
             <p>
-              Daily! Our AI continuously scans the market, analyzing sales trends, engagement data, and competition to curate new winning products every day. We focus on quality over quantity, ensuring every product meets our strict criteria for profitability.
+              Daily! Our AI continuously scans the market, analyzing sales trends, engagement data, and competition to
+              curate new winning products every day. We focus on quality over quantity, ensuring every product meets our
+              strict criteria for profitability.
             </p>
-          )
-        }
-      ]
+          ),
+        },
+      ],
     },
     {
       title: "Features & Benefits",
@@ -76,7 +98,7 @@ const FAQ = () => {
               </ul>
               <p className="mt-4">With WinProd AI, you're not guessing—you're selling products that work.</p>
             </div>
-          )
+          ),
         },
         {
           question: "What features does WinProd AI offer?",
@@ -103,11 +125,14 @@ const FAQ = () => {
                   <span className="text-green-500">✅</span> Marketing strategies & automation tools
                 </li>
               </ul>
-              <p className="mt-4">We designed WinProd AI to be a one-stop solution for sellers looking to scale with high-performing products.</p>
+              <p className="mt-4">
+                We designed WinProd AI to be a one-stop solution for sellers looking to scale with high-performing
+                products.
+              </p>
             </div>
-          )
-        }
-      ]
+          ),
+        },
+      ],
     },
     {
       title: "Community & Social",
@@ -117,16 +142,19 @@ const FAQ = () => {
           question: "Does WinProd AI have a community?",
           answer: (
             <p>
-              Yes! We believe in building a winning community. Join our exclusive Facebook group where sellers share strategies, success stories, and insights. After signing up, you'll receive an invitation to our private group, or you can search for WinProd AI Official on Facebook.
+              Yes! We believe in building a winning community. Join our exclusive Facebook group where sellers share
+              strategies, success stories, and insights. After signing up, you'll receive an invitation to our private
+              group, or you can search for WinProd AI Official on Facebook.
             </p>
-          )
+          ),
         },
         {
           question: "Is WinProd AI on YouTube and Instagram?",
           answer: (
             <div className="space-y-4">
               <p>
-                Yes! We regularly upload eCommerce strategies, product research tips, and case studies on YouTube. Follow us on Instagram for daily insights, product showcases, and success stories.
+                Yes! We regularly upload eCommerce strategies, product research tips, and case studies on YouTube.
+                Follow us on Instagram for daily insights, product showcases, and success stories.
               </p>
               <div className="flex flex-wrap gap-4">
                 <a href="#" className="flex items-center gap-2 text-red-600 hover:text-red-700">
@@ -139,9 +167,9 @@ const FAQ = () => {
                 </a>
               </div>
             </div>
-          )
-        }
-      ]
+          ),
+        },
+      ],
     },
     {
       title: "Marketing & Advertising",
@@ -155,34 +183,44 @@ const FAQ = () => {
               <ul className="space-y-3">
                 <li className="flex items-start gap-2">
                   <span className="text-blue-500 shrink-0">📌</span>
-                  <span><strong>Facebook & Instagram Ads</strong> – AI-suggested audience targeting</span>
+                  <span>
+                    <strong>Facebook & Instagram Ads</strong> – AI-suggested audience targeting
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-500 shrink-0">📌</span>
-                  <span><strong>Google Shopping & SEO</strong> – High-intent buyer targeting</span>
+                  <span>
+                    <strong>Google Shopping & SEO</strong> – High-intent buyer targeting
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-500 shrink-0">📌</span>
-                  <span><strong>TikTok Influencer Marketing</strong> – Viral product trends</span>
+                  <span>
+                    <strong>TikTok Influencer Marketing</strong> – Viral product trends
+                  </span>
                 </li>
                 <li className="flex items-start gap-2">
                   <span className="text-blue-500 shrink-0">📌</span>
-                  <span><strong>Amazon & eBay Selling</strong> – AI-driven product ranking</span>
+                  <span>
+                    <strong>Amazon & eBay Selling</strong> – AI-driven product ranking
+                  </span>
                 </li>
               </ul>
               <p>Use our AI-powered ad insights to maximize ROAS!</p>
             </div>
-          )
+          ),
         },
         {
           question: "Can I use the product images & videos provided?",
           answer: (
             <p>
-              Yes! We provide high-quality images for you to use in your store, product listings, and ad campaigns. We also suggest video ad styles based on top-performing creatives. For best results, customize your video ads to stand out in the marketplace.
+              Yes! We provide high-quality images for you to use in your store, product listings, and ad campaigns. We
+              also suggest video ad styles based on top-performing creatives. For best results, customize your video ads
+              to stand out in the marketplace.
             </p>
-          )
-        }
-      ]
+          ),
+        },
+      ],
     },
     {
       title: "Billing & Support",
@@ -194,35 +232,42 @@ const FAQ = () => {
             <div className="space-y-2">
               <p>We offer flexible plans to suit different needs:</p>
               <ul className="space-y-2">
-                <li><strong>Free Plan</strong> – Limited access to winning products</li>
-                <li><strong>Pro Plan</strong> – Full access to product data, analytics, and AI-driven insights + VIP support & advanced automation</li>
+                <li>
+                  <strong>Free Plan</strong> – Limited access to winning products
+                </li>
+                <li>
+                  <strong>Pro Plan</strong> – Full access to product data, analytics, and AI-driven insights + VIP
+                  support & advanced automation
+                </li>
               </ul>
             </div>
-          )
+          ),
         },
         {
           question: "What payment methods do you accept?",
-          answer: (
-            <p>We accept PayPal, credit/debit cards, and cryptocurrency payments for subscriptions.</p>
-          )
+          answer: <p>We accept PayPal, credit/debit cards, and cryptocurrency payments for subscriptions.</p>,
         },
         {
           question: "Do you offer refunds?",
           answer: (
-            <p>Yes! We have a 30-day money-back guarantee on all paid plans. If you're not satisfied, simply contact support for a full refund—no questions asked.</p>
-          )
+            <p>
+              Yes! We have a 30-day money-back guarantee on all paid plans. If you're not satisfied, simply contact
+              support for a full refund—no questions asked.
+            </p>
+          ),
         },
         {
           question: "Is there a contract or commitment?",
-          answer: (
-            <p>No contracts, no long-term commitments. You can cancel anytime with no penalties.</p>
-          )
+          answer: <p>No contracts, no long-term commitments. You can cancel anytime with no penalties.</p>,
         },
         {
           question: "How secure is WinProd AI?",
           answer: (
-            <p>Your data is fully encrypted and protected. Our payment processing is SSL-certified and handled through secure gateways.</p>
-          )
+            <p>
+              Your data is fully encrypted and protected. Our payment processing is SSL-certified and handled through
+              secure gateways.
+            </p>
+          ),
         },
         {
           question: "How do I contact support?",
@@ -244,51 +289,62 @@ const FAQ = () => {
                 </li>
               </ul>
             </div>
-          )
-        }
-      ]
-    }
-  ];
+          ),
+        },
+      ],
+    },
+  ]
 
   const toggleSection = (index: number) => {
-    setExpandedSections(prev => {
-      const next = new Set(prev);
+    setExpandedSections((prev) => {
+      const next = new Set(prev)
       if (next.has(index)) {
-        next.delete(index);
+        next.delete(index)
       } else {
-        next.add(index);
+        next.add(index)
       }
-      return next;
-    });
-  };
+      return next
+    })
+  }
 
   const toggleQuestion = (question: string) => {
-    setExpandedQuestions(prev => {
-      const next = new Set(prev);
+    setExpandedQuestions((prev) => {
+      const next = new Set(prev)
       if (next.has(question)) {
-        next.delete(question);
+        next.delete(question)
       } else {
-        next.add(question);
+        next.add(question)
       }
-      return next;
-    });
-  };
+      return next
+    })
+  }
 
-  const filteredSections = sections.map(section => ({
-    ...section,
-    items: section.items.filter(item =>
-      item.question.toLowerCase().includes(searchQuery.toLowerCase())
-    )
-  })).filter(section => section.items.length > 0);
+  const filteredSections = sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => item.question.toLowerCase().includes(searchQuery.toLowerCase())),
+    }))
+    .filter((section) => section.items.length > 0)
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-4 py-12">
+        {/* Fixed Back Button */}
+        <div className="fixed top-4 left-4 z-50">
+          <button
+            className="flex items-center gap-2 bg-white/90 backdrop-blur-sm text-primary hover:text-primary/80 py-2 px-4 rounded-lg shadow-sm border border-gray-200 transition-colors"
+            onClick={() => window.history.back()}
+          >
+            <ArrowLeft size={20} />
+            <span className="font-medium">Back</span>
+          </button>
+        </div>
+
         {/* Header */}
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">Frequently Asked Questions</h1>
           <p className="text-gray-600 mb-8">Everything you need to know about WinProd AI</p>
-          
+
           {/* Search Bar */}
           <div className="relative max-w-xl mx-auto">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
@@ -303,32 +359,29 @@ const FAQ = () => {
         </div>
 
         {/* FAQ Sections */}
-        <div className="space-y-6">
+        <div className="space-y-8">
           {filteredSections.map((section, sectionIndex) => (
-            <div
-              key={sectionIndex}
-              className="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm"
-            >
+            <div key={sectionIndex} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
               {/* Section Header */}
               <button
                 onClick={() => toggleSection(sectionIndex)}
-                className="w-full px-6 py-4 flex items-center justify-between bg-white hover:bg-gray-50 transition-colors"
+                className="w-full px-6 py-4 flex items-center justify-between bg-gray-50 hover:bg-gray-100 transition-colors border-b border-gray-200"
               >
                 <div className="flex items-center gap-3">
-                  <section.icon size={20} className="text-primary" />
-                  <h2 className="text-lg font-semibold text-gray-900">{section.title}</h2>
+                  <section.icon size={24} className="text-primary" />
+                  <h2 className="text-xl font-semibold text-gray-900">{section.title}</h2>
                 </div>
                 <ChevronDown
                   size={20}
                   className={`text-gray-400 transform transition-transform duration-200 ${
-                    expandedSections.has(sectionIndex) ? 'rotate-180' : ''
+                    expandedSections.has(sectionIndex) ? "rotate-180" : ""
                   }`}
                 />
               </button>
 
               {/* Section Content */}
               {expandedSections.has(sectionIndex) && (
-                <div className="border-t border-gray-200">
+                <div>
                   {section.items.map((item, itemIndex) => (
                     <div key={itemIndex} className="border-b border-gray-200 last:border-b-0">
                       <button
@@ -339,15 +392,13 @@ const FAQ = () => {
                         <ChevronDown
                           size={16}
                           className={`text-gray-400 transform transition-transform duration-200 ${
-                            expandedQuestions.has(item.question) ? 'rotate-180' : ''
+                            expandedQuestions.has(item.question) ? "rotate-180" : ""
                           }`}
                         />
                       </button>
-                      
+
                       {expandedQuestions.has(item.question) && (
-                        <div className="px-6 pb-4 text-gray-600">
-                          {item.answer}
-                        </div>
+                        <div className="px-6 pb-4 text-gray-600">{item.answer}</div>
                       )}
                     </div>
                   ))}
@@ -367,7 +418,8 @@ const FAQ = () => {
         </div>
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default FAQ;
+export default FAQ
+

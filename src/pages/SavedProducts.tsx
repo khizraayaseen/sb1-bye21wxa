@@ -1,26 +1,65 @@
-import { Bookmark, Search, Filter, ArrowRight } from 'lucide-react';
+"use client"
+
+import { useState, useEffect } from "react"
+import { Bookmark, Search, Filter, ArrowRight, X } from "lucide-react"
+import { supabase } from "../lib/supabase"
 
 const SavedProducts = () => {
-  const savedProducts :any = [
-    // {
-    //   id: 1,
-    //   name: "Portable LED Ring Light",
-    //   image: "https://images.unsplash.com/photo-1603190287605-e6ade32fa852?auto=format&fit=crop&q=80&w=500",
-    //   price: "$29.99",
-    //   profit: "+156%",
-    //   engagement: "High",
-    //   savedAt: "2 days ago"
-    // },
-    // {
-    //   id: 2,
-    //   name: "Smart Plant Monitor",
-    //   image: "https://images.unsplash.com/photo-1585336261022-680e295ce3fe?auto=format&fit=crop&q=80&w=500",
-    //   price: "$39.99",
-    //   profit: "+142%",
-    //   engagement: "Medium",
-    //   savedAt: "3 days ago"
-    // }
-  ];
+  const [savedProducts, setSavedProducts] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [searchQuery, setSearchQuery] = useState("")
+
+  useEffect(() => {
+    fetchSavedProducts()
+  }, [])
+
+  const fetchSavedProducts = async () => {
+    setLoading(true)
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (user) {
+      const { data, error } = await supabase
+        .from("saved_products")
+        .select(`
+          *,
+          products:product_id (*)
+        `)
+        .eq("user_id", user.id)
+
+      if (error) {
+        console.error("Error fetching saved products:", error)
+      } else {
+        setSavedProducts(data.map((item) => item.products))
+      }
+    }
+    setLoading(false)
+  }
+
+  const removeSavedProduct = async (productId) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (user) {
+      const { error } = await supabase
+        .from("saved_products")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("product_id", productId)
+
+      if (error) {
+        console.error("Error removing saved product:", error)
+      } else {
+        setSavedProducts(savedProducts.filter((product) => product.id !== productId))
+      }
+    }
+  }
+
+  const filteredProducts = savedProducts.filter((product) =>
+    product.name.toLowerCase().includes(searchQuery.toLowerCase()),
+  )
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -41,6 +80,8 @@ const SavedProducts = () => {
             <input
               type="text"
               placeholder="Search saved products..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
             />
           </div>
@@ -51,39 +92,55 @@ const SavedProducts = () => {
         </div>
 
         {/* Products Grid */}
-        {savedProducts.length > 0 ? (
+        {loading ? (
+          <div className="text-center py-12">
+            <div className="animate-spin rounded-full h-12 w-12 border-t-4 border-primary mx-auto mb-4"></div>
+            <p className="text-gray-600">Loading saved products...</p>
+          </div>
+        ) : filteredProducts.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {savedProducts.map((product) => (
-              <div key={product.id} className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200 hover:shadow-md transition-shadow duration-200">
+            {filteredProducts.map((product) => (
+              <div
+                key={product.id}
+                className="bg-white rounded-xl shadow-sm overflow-hidden border border-gray-200 hover:shadow-md transition-shadow duration-200"
+              >
                 <div className="relative h-48">
-                  <img 
-                    src={product.image}
+                  <img
+                    src={product.images && product.images.length > 0 ? product.images[0] : "/placeholder.svg"}
                     alt={product.name}
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute top-2 right-2">
-                    <button className="p-1.5 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors">
-                      <Bookmark size={18} className="text-primary fill-primary" />
+                    <button
+                      className="p-1.5 bg-white rounded-lg shadow-sm hover:bg-gray-50 transition-colors"
+                      onClick={() => removeSavedProduct(product.id)}
+                    >
+                      <X size={18} className="text-gray-600" />
                     </button>
                   </div>
                 </div>
-                
+
                 <div className="p-4">
                   <h3 className="font-medium text-gray-900 mb-1">{product.name}</h3>
-                  <p className="text-sm text-gray-500 mb-3">Saved {product.savedAt}</p>
-                  
+                  <p className="text-sm text-gray-500 mb-3">
+                    Saved {new Date(product.created_at).toLocaleDateString()}
+                  </p>
+
                   <div className="flex items-center justify-between mb-4">
                     <div className="text-sm">
                       <span className="text-gray-600">Price:</span>
-                      <span className="ml-1 font-medium text-gray-900">{product.price}</span>
+                      <span className="ml-1 font-medium text-gray-900">${product.selling_price}</span>
                     </div>
                     <div className="text-sm">
                       <span className="text-gray-600">Profit:</span>
-                      <span className="ml-1 font-medium text-green-600">{product.profit}</span>
+                      <span className="ml-1 font-medium text-green-600">${product.profit_margin}</span>
                     </div>
                   </div>
-                  
-                  <button className="w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2">
+
+                  <button
+                    onClick={() => (window.location.href = `/product/${product.id}`)}
+                    className="w-full bg-primary hover:bg-primary/90 text-white py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                  >
                     View Details
                     <ArrowRight size={18} />
                   </button>
@@ -96,8 +153,8 @@ const SavedProducts = () => {
             <Bookmark size={48} className="mx-auto text-gray-400 mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No saved products yet</h3>
             <p className="text-gray-600 mb-4">Start saving products to build your collection</p>
-            <button 
-              onClick={() => window.location.href = '/dashboard'}
+            <button
+              onClick={() => (window.location.href = "/dashboard")}
               className="inline-flex items-center justify-center px-6 py-2 bg-primary hover:bg-primary/90 text-white rounded-lg font-medium transition-colors"
             >
               Discover Products
@@ -106,7 +163,7 @@ const SavedProducts = () => {
         )}
       </div>
     </div>
-  );
-};
+  )
+}
 
-export default SavedProducts;
+export default SavedProducts

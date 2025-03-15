@@ -21,73 +21,8 @@ import {
 import { useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabase"
 
-// Generate 20 products for demonstration
-const generateProducts = () => {
-  const baseProducts = [
-    {
-      name: "Acupressure Reflexology Chart Socks",
-      image: "https://i.postimg.cc/j2s21Z6r/w3ame3fm-NY79-Zb3-Rp-Ce-Johx-X0298-No-DKnk-T1so-DY.jpg",
-      stats: {
-        profit: "+156%",
-        engagement: "High",
-        fbAds: "Active",
-        targetingInfo: "Available",
-        retailPrice: "$29.99",
-      },
-    },
-    {
-      name: "Teeth Whitening Powder",
-      image: "https://i.postimg.cc/jdxn3dvJ/g-LNIZ90-Muiv-Qh-P34kt-ENf25-Lgb-L17u-Ih4og7-SF1q.webp",
-      stats: {
-        profit: "+142%",
-        engagement: "Medium",
-        fbAds: "Active",
-        targetingInfo: "Available",
-        retailPrice: "$39.99",
-      },
-    },
-    {
-      name: "Rechargeable Automatic Dog Paw Cleaner",
-      image: "https://i.postimg.cc/QtZHQXHC/ASWBR0od5-FT0-Gt-KSt-CAsto-Ruezkhp-Urt-NKBa6-CBK.webp",
-      stats: {
-        profit: "+98%",
-        engagement: "High",
-        fbAds: "Active",
-        targetingInfo: "Available",
-        retailPrice: "$24.99",
-      },
-    },
-    {
-      name: "Baby Hair Clipper with Vacuum",
-      image: "https://i.postimg.cc/BZD8N7Fk/Wuaw43-J4j-Mu1x-Dehzoo8d-UUHTnke-Kcnrm-GMzs-DCj.webp",
-      stats: {
-        profit: "+134%",
-        engagement: "High",
-        fbAds: "Active",
-        targetingInfo: "Available",
-        retailPrice: "$19.99",
-      },
-    },
-  ]
-
-  return Array.from({ length: 20 }, (_, index) => {
-    const baseProduct = baseProducts[index % baseProducts.length]
-    const daysAgo = Math.floor(Math.random() * 7) + 1
-    return {
-      id: index + 1,
-      name: baseProduct.name,
-      image: baseProduct.image,
-      posted: `${daysAgo} days ago`,
-      stats: baseProduct.stats,
-      isLocked: index < 4, // Only first 4 products are locked
-      isSaved: false,
-    }
-  })
-}
-
-// const products = generateProducts();
-const PRODUCTS_PER_PAGE = 20
-const TOTAL_PAGES = 14 // For demonstration, showing 277 total products
+// Update the PRODUCTS_PER_PAGE constant from 20 to 10
+const PRODUCTS_PER_PAGE = 10
 
 const Dashboard = () => {
   const navigate = useNavigate()
@@ -102,6 +37,9 @@ const Dashboard = () => {
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("")
   const [sortBy, setSortBy] = useState("new") // new, trending, profit
+  const [totalCount, setTotalCount] = useState(0)
+  const [totalPages, setTotalPages] = useState(1)
+  const [userSubscription, setUserSubscription] = useState("free") // Default to free
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -110,6 +48,27 @@ const Dashboard = () => {
 
     return () => clearTimeout(timer)
   }, [searchQuery])
+
+  useEffect(() => {
+    const fetchUserSubscription = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: customer, error } = await supabase
+          .from("customers")
+          .select("subscription_tier")
+          .eq("user_id", user.id)
+          .single()
+
+        if (!error && customer) {
+          setUserSubscription(customer.subscription_tier)
+        }
+      }
+    }
+
+    fetchUserSubscription()
+  }, [])
 
   useEffect(() => {
     const fetchData = async () => {
@@ -125,9 +84,26 @@ const Dashboard = () => {
         setCategories(categoriesData || [])
       }
 
+      // Fetch saved products
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: savedProductsData, error: savedProductsError } = await supabase
+          .from("saved_products")
+          .select("product_id")
+          .eq("user_id", user.id)
+
+        if (savedProductsError) {
+          console.error("Error fetching saved products:", savedProductsError)
+        } else {
+          setSavedProducts(new Set(savedProductsData.map((item) => item.product_id)))
+        }
+      }
+
       try {
-        // Fetch products with a different approach for category filtering
-        let query = supabase.from("products").select("*")
+        // Build the base query for products
+        let query = supabase.from("products").select("*", { count: "exact" })
 
         // Apply search filter if searchQuery is not empty
         if (debouncedSearchQuery.trim()) {
@@ -164,8 +140,6 @@ const Dashboard = () => {
             break
           case "trending":
             // For trending, we might sort by views or some popularity metric
-            // For now, let's assume there's a field called "views" or "popularity"
-            // If such a field doesn't exist, this will fall back to default sorting
             query = query.order("views", { ascending: false })
             break
           case "profit":
@@ -173,11 +147,25 @@ const Dashboard = () => {
             break
         }
 
+        // We want to show all products to all users, but with different button text
+        // No filtering needed here - we'll handle access control at the UI level
+
+        // Apply pagination
+        const from = (currentPage - 1) * PRODUCTS_PER_PAGE
+        const to = from + PRODUCTS_PER_PAGE - 1
+        query = query.range(from, to)
+
         // Execute the query
-        const { data: productsData, error: productsError } = await query
+        const { data: productsData, error: productsError, count } = await query
 
         if (productsError) {
           throw productsError
+        }
+
+        // Set total count and calculate total pages
+        if (count !== null) {
+          setTotalCount(count)
+          setTotalPages(Math.ceil(count / PRODUCTS_PER_PAGE))
         }
 
         // If a category is selected, filter the products after fetching
@@ -203,8 +191,7 @@ const Dashboard = () => {
 
         // If we're showing saved products, filter the results
         if (showSaved) {
-          const savedIds = Array.from(savedProducts)
-          filteredProducts = filteredProducts.filter((product: any) => savedIds.includes(product.id))
+          filteredProducts = filteredProducts.filter((product: any) => savedProducts.has(product.id))
         }
 
         // Set the filtered products
@@ -215,22 +202,69 @@ const Dashboard = () => {
     }
 
     fetchData()
-  }, [selectedCategory, debouncedSearchQuery, dateRange, sortBy, showSaved, savedProducts])
+  }, [
+    selectedCategory,
+    debouncedSearchQuery,
+    dateRange,
+    sortBy,
+    showSaved,
+    savedProducts,
+    currentPage,
+    userSubscription,
+  ])
 
-  const toggleSaveProduct = (productId: number) => {
-    setSavedProducts((prev) => {
-      const newSet = new Set(prev)
-      if (newSet.has(productId)) {
-        newSet.delete(productId)
+  const toggleSaveProduct = async (productId: number) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (user) {
+      if (savedProducts.has(productId)) {
+        // Remove from saved products
+        const { error } = await supabase
+          .from("saved_products")
+          .delete()
+          .eq("user_id", user.id)
+          .eq("product_id", productId)
+
+        if (error) {
+          console.error("Error removing saved product:", error)
+        } else {
+          setSavedProducts((prev) => {
+            const newSet = new Set(prev)
+            newSet.delete(productId)
+            return newSet
+          })
+        }
       } else {
-        newSet.add(productId)
+        // Add to saved products
+        const { error } = await supabase.from("saved_products").insert({ user_id: user.id, product_id: productId })
+
+        if (error) {
+          console.error("Error saving product:", error)
+        } else {
+          setSavedProducts((prev) => new Set(prev).add(productId))
+        }
       }
-      return newSet
-    })
+    }
   }
 
   const handleShowMeMoney = (productId: number) => {
-    navigate(`/product/${productId}`)
+    const product = products.find((p: any) => p.id === productId)
+
+    // If product is locked or a top product and user is not pro, redirect to upgrade page
+    if (product && (product.is_locked || product.is_top_product) && userSubscription !== "pro") {
+      // If it has a release time in the future, still show the product details
+      if (product.release_time && new Date(product.release_time) > new Date()) {
+        navigate(`/product/${productId}`)
+      } else {
+        // Otherwise redirect to pricing page
+        navigate("/pricing")
+      }
+    } else {
+      // For unlocked products or pro users, show product details
+      navigate(`/product/${productId}`)
+    }
   }
 
   const getPaginationRange = () => {
@@ -246,13 +280,13 @@ const Dashboard = () => {
       start = 1
     }
 
-    if (end > TOTAL_PAGES) {
-      start -= end - TOTAL_PAGES
-      end = TOTAL_PAGES
+    if (end > totalPages) {
+      start -= end - totalPages
+      end = totalPages
     }
 
     start = Math.max(start, 1)
-    end = Math.min(end, TOTAL_PAGES)
+    end = Math.min(end, totalPages)
 
     if (start > 1) {
       range.push(1)
@@ -263,9 +297,9 @@ const Dashboard = () => {
       range.push(i)
     }
 
-    if (end < TOTAL_PAGES) {
-      if (end < TOTAL_PAGES - 1) range.push("...")
-      range.push(TOTAL_PAGES)
+    if (end < totalPages) {
+      if (end < totalPages - 1) range.push("...")
+      range.push(totalPages)
     }
 
     return range
@@ -323,7 +357,7 @@ const Dashboard = () => {
         >
           {/* Left Side - My Saved */}
           <button
-            onClick={() => setShowSaved(!showSaved)}
+            onClick={() => navigate("/saved-products")}
             className={`flex items-center justify-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors w-full md:w-auto ${
               showSaved ? "bg-secondary text-white" : "bg-white border border-gray-300 text-gray-700 hover:bg-gray-50"
             }`}
@@ -391,9 +425,44 @@ const Dashboard = () => {
                     alt={product.name}
                     className="w-full h-full object-cover"
                   />
-                  {product.is_locked && (
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex items-center justify-center">
-                      <Lock size={24} className="text-white" />
+                  {(product.is_locked || product.is_top_product) &&
+                    (userSubscription !== "pro" ||
+                      (product.release_time && new Date(product.release_time) > new Date())) && (
+                      <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px] flex flex-col items-center justify-center">
+                        <Lock size={24} className="text-white mb-1" />
+                        {product.release_time && new Date(product.release_time) > new Date() && (
+                          <div className="text-white text-xs text-center px-2">
+                            <div>Available in</div>
+                            <div className="font-bold">
+                              {(() => {
+                                const timeRemaining = new Date(product.release_time).getTime() - new Date().getTime()
+                                const days = Math.floor(timeRemaining / (1000 * 60 * 60 * 24))
+                                const hours = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+                                const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60))
+                                const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000)
+
+                                return (
+                                  <>
+                                    {days > 0 && `${days}d `}
+                                    {hours > 0 && `${hours}h `}
+                                    {minutes > 0 && `${minutes}m `}
+                                    {seconds}s
+                                  </>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                        )}
+                        {product.is_top_product && (
+                          <div className="text-white text-xs text-center px-2 mt-1">
+                            <div>Pro members only</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  {product.is_top_product && (
+                    <div className="absolute top-2 left-2 bg-purple-500 text-white text-xs px-2 py-1 rounded-full">
+                      Top Pick
                     </div>
                   )}
                 </div>
@@ -442,12 +511,26 @@ const Dashboard = () => {
                 <button
                   onClick={() => handleShowMeMoney(product.id)}
                   className={`flex-1 py-2 rounded-lg text-sm font-medium transition-all duration-200 ${
-                    product.is_locked
+                    product.is_locked || product.is_top_product
                       ? "bg-primary hover:bg-primary/90 text-white shadow-sm hover:shadow"
                       : "bg-secondary hover:bg-secondary/90 text-white shadow-sm hover:shadow"
                   }`}
                 >
-                  {product.is_locked ? "Unlock Now" : "Show Me The Money!"}
+                  {product.is_top_product
+                    ? "Become a Pro to Unlock"
+                    : product.is_locked && product.release_time && new Date(product.release_time) > new Date()
+                      ? (() => {
+                          const timeRemaining = new Date(product.release_time).getTime() - new Date().getTime()
+                          const days = Math.floor(timeRemaining / (1000 * 60 * 60 * 24))
+                          const hours = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+                          const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60))
+                          const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000)
+
+                          return `Unlock in ${days > 0 ? `${days}d ` : ""}${hours > 0 ? `${hours}h ` : ""}${minutes > 0 ? `${minutes}m ` : ""}${seconds}s`
+                        })()
+                      : product.is_locked
+                        ? "Become a Pro to Unlock"
+                        : "Show Me The Money!"}
                 </button>
 
                 <button
@@ -472,7 +555,7 @@ const Dashboard = () => {
       </div>
 
       {/* Pagination */}
-      {products.length > 0 && (
+      {products.length > 0 && totalPages > 1 && (
         <div className="flex justify-center mt-8 gap-2 overflow-x-auto">
           {getPaginationRange().map((page, index) =>
             page === "..." ? (
@@ -493,6 +576,11 @@ const Dashboard = () => {
           )}
         </div>
       )}
+
+      {/* Total Products Count */}
+      <div className="text-center mt-6 text-sm text-gray-500">
+        Showing {products.length} of {totalCount} products
+      </div>
     </div>
   )
 }

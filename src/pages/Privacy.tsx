@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Lock, Eye, Database, Cookie, Mail } from 'lucide-react';
+import { Shield, Lock, Eye, Database, Cookie, Mail, ArrowLeft} from 'lucide-react';
 
 const Privacy = () => {
   const sections = [
@@ -128,6 +128,17 @@ const Privacy = () => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-4xl mx-auto px-4 py-12">
+        {/* Fixed Back Button */}
+      <div className="fixed top-4 left-4 z-50">
+        <button
+          className="flex items-center gap-2 bg-white/90 backdrop-blur-sm text-primary hover:text-primary/80 py-2 px-4 rounded-lg shadow-sm border border-gray-200 transition-colors"
+          onClick={() => window.history.back()}
+        >
+          <ArrowLeft size={20} />
+          <span className="font-medium">Back</span>
+        </button>
+      </div>
+      
         {/* Header */}
         <div className="text-center mb-12">
           <h1 className="text-3xl font-bold text-gray-900 mb-4">Privacy Policy</h1>

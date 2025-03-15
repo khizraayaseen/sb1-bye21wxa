@@ -3,16 +3,19 @@
 import type React from "react"
 
 import { useState, useEffect, useRef } from "react"
-import { useParams } from "react-router-dom"
-import { ShoppingCart, Bookmark, DollarSign, ShoppingBag, Search, ExternalLink, Play, ZoomIn } from "lucide-react"
+import { useParams, useNavigate } from "react-router-dom"
+import { ShoppingCart, Bookmark, DollarSign, ShoppingBag, Search, ExternalLink, Play, ZoomIn, Lock } from "lucide-react"
 import { supabase } from "../lib/supabase"
 
 const ProductDetails = () => {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [isSaved, setIsSaved] = useState(false)
-  const isPro = false
+  const [userSubscription, setUserSubscription] = useState("free") // Default to free
   const [product, setProduct] = useState<any>({})
   const [loading, setLoading] = useState(true)
+  const [isLocked, setIsLocked] = useState(false)
+  const [releaseTime, setReleaseTime] = useState<Date | null>(null)
   const [categories, setCategories] = useState<string[]>([])
   const [addons, setAddons] = useState<any>({})
   const [addonSettings, setAddonSettings] = useState<any>({})
@@ -22,6 +25,28 @@ const ProductDetails = () => {
   const [isZoomed, setIsZoomed] = useState(false)
   const [zoomPosition, setZoomPosition] = useState({ x: 0, y: 0 })
   const imageRef = useRef<HTMLDivElement>(null)
+  const [currentTime, setCurrentTime] = useState(new Date())
+
+  useEffect(() => {
+    const fetchUserSubscription = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: customer, error } = await supabase
+          .from("customers")
+          .select("subscription_tier")
+          .eq("user_id", user.id)
+          .single()
+
+        if (!error && customer) {
+          setUserSubscription(customer.subscription_tier)
+        }
+      }
+    }
+
+    fetchUserSubscription()
+  }, [])
 
   useEffect(() => {
     const fetchProduct = async () => {
@@ -34,6 +59,30 @@ const ProductDetails = () => {
         console.error("Error fetching product:", error.message)
         setLoading(false)
         return
+      }
+
+      // Check if product is locked for this user
+      const isProductLocked = data.is_locked || data.is_top_product
+      const hasReleaseTime = data.release_time && new Date(data.release_time) > new Date()
+
+      // Set locked state based on user subscription and product properties
+      if (userSubscription === "pro") {
+        // Pro users can access all products
+        setIsLocked(false)
+      } else {
+        // Free users can't access locked products or top products
+        setIsLocked(isProductLocked || hasReleaseTime)
+
+        // If product is locked and user is not pro, redirect to upgrade page
+        if (isProductLocked && !hasReleaseTime) {
+          navigate("/pricing")
+          return
+        }
+      }
+
+      // Set release time if available
+      if (data.release_time) {
+        setReleaseTime(new Date(data.release_time))
       }
 
       // Fetch categories for this product
@@ -153,18 +202,30 @@ const ProductDetails = () => {
           high: data.sales_high || 0,
         },
         description: data.description,
-        specs: data.specs || [
-          { label: "Material", value: "Waterproof Oxford Fabric + LED Panel" },
-          { label: "Capacity", value: "20L" },
-          { label: "LED Display", value: "Programmable RGB LED screen with mobile app control" },
-          { label: "Battery", value: "Built-in rechargeable 10,000mAh battery" },
-          { label: "Charging Port", value: "USB Type-C fast charging" },
-          { label: "Size", value: "45 cm (H) × 30 cm (W) × 15 cm (D)" },
-          { label: "Weight", value: "1.2 kg" },
-          { label: "Connectivity", value: "Bluetooth & Wi-Fi for app control" },
-          { label: "Water Resistance", value: "IPX4 (Splash Resistant)" },
-        ],
+        specs: data.specs || [],
         images: data.images || [],
+        is_locked: data.is_locked,
+        is_top_product: data.is_top_product,
+        release_time: data.release_time,
+      }
+
+      // Check if the product is saved
+      const {
+        data: { user },
+      } = await supabase.auth.getUser()
+      if (user) {
+        const { data: savedProduct, error: savedProductError } = await supabase
+          .from("saved_products")
+          .select()
+          .eq("user_id", user.id)
+          .eq("product_id", id)
+          .single()
+
+        if (savedProductError && savedProductError.code !== "PGRST116") {
+          console.error("Error checking if product is saved:", savedProductError)
+        } else {
+          setIsSaved(!!savedProduct)
+        }
       }
 
       setProduct(formattedProduct)
@@ -172,7 +233,7 @@ const ProductDetails = () => {
     }
 
     if (id) fetchProduct()
-  }, [id])
+  }, [id, userSubscription, navigate])
 
   useEffect(() => {
     const handleEscKey = (e: KeyboardEvent) => {
@@ -185,6 +246,19 @@ const ProductDetails = () => {
     return () => window.removeEventListener("keydown", handleEscKey)
   }, [isZoomed])
 
+  useEffect(() => {
+    // Only set up the timer if we have a release time and the product is locked
+    if (releaseTime && isLocked) {
+      // Update the current time every second
+      const timer = setInterval(() => {
+        setCurrentTime(new Date())
+      }, 1000)
+
+      // Clean up the timer when the component unmounts
+      return () => clearInterval(timer)
+    }
+  }, [releaseTime, isLocked])
+
   const calculateMonthlyRevenue = (sales: number, profitPerSale: number) => {
     const revenue = sales * profitPerSale
     return revenue.toLocaleString("en-US", {
@@ -194,8 +268,32 @@ const ProductDetails = () => {
     })
   }
 
-  const toggleSave = () => {
-    setIsSaved(!isSaved)
+  const toggleSave = async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser()
+
+    if (user) {
+      if (isSaved) {
+        // Remove from saved products
+        const { error } = await supabase.from("saved_products").delete().eq("user_id", user.id).eq("product_id", id)
+
+        if (error) {
+          console.error("Error removing saved product:", error)
+        } else {
+          setIsSaved(false)
+        }
+      } else {
+        // Add to saved products
+        const { error } = await supabase.from("saved_products").insert({ user_id: user.id, product_id: id })
+
+        if (error) {
+          console.error("Error saving product:", error)
+        } else {
+          setIsSaved(true)
+        }
+      }
+    }
   }
 
   // Function to extract TikTok video ID from various URL formats
@@ -588,6 +686,84 @@ const ProductDetails = () => {
     )
   }
 
+  // Render a locked product view if the product is locked
+  if (isLocked && releaseTime) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
+          <div className="bg-yellow-100 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
+            <Lock className="h-10 w-10 text-yellow-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">{product.name}</h1>
+          <p className="text-gray-600 mb-6">
+            This product will be available in {(() => {
+              const timeRemaining = releaseTime.getTime() - currentTime.getTime()
+              const days = Math.floor(timeRemaining / (1000 * 60 * 60 * 24))
+              const hours = Math.floor((timeRemaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
+              const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60))
+              const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000)
+
+              return (
+                <>
+                  {days > 0 && `${days} days, `}
+                  {hours > 0 && `${hours} hours, `}
+                  {minutes > 0 && `${minutes} minutes, `}
+                  {`${seconds} seconds`}
+                </>
+              )
+            })()}
+          </p>
+          <div className="space-y-4">
+            <button
+              onClick={() => navigate("/pricing")}
+              className="w-full bg-primary hover:bg-primary/90 text-white py-3 rounded-lg font-medium transition-colors"
+            >
+              Upgrade to Pro for Early Access
+            </button>
+            <button
+              onClick={() => navigate("/dashboard")}
+              className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 py-3 rounded-lg font-medium transition-colors"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (isLocked || product.is_top_product) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
+          <div className="bg-purple-100 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6">
+            <Lock className="h-10 w-10 text-purple-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">{product.name}</h1>
+          {product.is_top_product ? (
+            <p className="text-gray-600 mb-6">This is a premium product available exclusively to Pro members.</p>
+          ) : (
+            <p className="text-gray-600 mb-6">This product is locked and requires a Pro membership to access.</p>
+          )}
+          <div className="space-y-4">
+            <button
+              onClick={() => navigate("/pricing")}
+              className="w-full bg-primary hover:bg-primary/90 text-white py-3 rounded-lg font-medium transition-colors"
+            >
+              Upgrade to Pro to Unlock
+            </button>
+            <button
+              onClick={() => navigate("/dashboard")}
+              className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 py-3 rounded-lg font-medium transition-colors"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   const handleImageMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!isZoomed || !imageRef.current) return
 
@@ -600,7 +776,16 @@ const ProductDetails = () => {
 
   return (
     <div className="min-h-screen bg-gray-50 mt-[40px] sm:mt-[40px] lg:mt-0">
+      {/* Product details UI */}
       <div className="max-w-7xl mx-auto px-4 pt-[8px] pb-6 md:pt-4 md:pb-12 lg:pt-7 lg:pb-16">
+        {/* If product is a top product, show a */}
+        {product.is_top_product && (
+          <div className="bg-purple-100 text-purple-800 px-4 py-2 rounded-lg mb-4 text-center">
+            <span className="font-semibold">Top Product</span> - This is one of our top picks!
+          </div>
+        )}
+
+        {/* Rest of the product details UI */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 sm:gap-8 md:gap-16 lg:gap-16">
           <div className="space-y-4">
             <div

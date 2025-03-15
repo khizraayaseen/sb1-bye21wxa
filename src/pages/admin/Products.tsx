@@ -14,9 +14,15 @@ import {
   X,
   ImageIcon,
   Loader2,
+  Star,
+  Calendar,
 } from "lucide-react"
 import { supabase } from "../../lib/supabase"
 
+// Define products per page constant for admin
+const PRODUCTS_PER_PAGE = 10
+
+// Update the Product interface to include release_time
 interface Product {
   id: string
   name: string
@@ -31,14 +37,11 @@ interface Product {
   specifications: any // Customize as needed
   is_top_product?: boolean
   priority?: number
+  release_time?: string | null // Add this field
   // No category_ids field as it's in a junction table
 }
 
-interface Category {
-  id: string
-  name: string
-}
-
+// Update the ProductFormData interface to include release_time
 interface ProductFormData {
   name: string
   description: string
@@ -72,6 +75,12 @@ interface ProductFormData {
   }
   is_top_product: boolean
   priority: number
+  release_time: string | null // Add this field
+}
+
+interface Category {
+  id: string
+  name: string
 }
 
 interface ProductWithCategories extends Product {
@@ -97,13 +106,77 @@ const checkStorageBucket = async () => {
   }
 }
 
-const fetchProductsAPI = async (): Promise<ProductWithCategories[]> => {
+// Update the fetchProductsAPI function to include pagination
+const fetchProductsAPI = async (page = 1): Promise<{ products: ProductWithCategories[]; totalCount: number }> => {
   try {
-    // Fetch products
+    // Calculate pagination offsets
+    const from = (page - 1) * PRODUCTS_PER_PAGE
+    const to = from + PRODUCTS_PER_PAGE - 1
+
+    // Fetch products with pagination and count
+    const {
+      data: products,
+      error: productsError,
+      count,
+    } = await supabase
+      .from("products")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(from, to)
+
+    if (productsError) throw productsError
+
+    // For each product, fetch its categories
+    const productsWithCategories = await Promise.all(
+      (products || []).map(async (product) => {
+        // Get category IDs for this product from the junction table
+        const { data: productCategories, error: junctionError } = await supabase
+          .from("product_categories")
+          .select("category_id")
+          .eq("product_id", product.id)
+
+        if (junctionError) throw junctionError
+
+        // Get the actual category objects
+        const categoryIds = productCategories?.map((pc) => pc.category_id) || []
+        let categories: Category[] = []
+
+        if (categoryIds.length > 0) {
+          const { data: categoryData, error: categoriesError } = await supabase
+            .from("categories")
+            .select("*")
+            .in("id", categoryIds)
+
+          if (categoriesError) throw categoriesError
+          categories = categoryData || []
+        }
+
+        return {
+          ...product,
+          categories,
+        }
+      }),
+    )
+
+    return {
+      products: productsWithCategories,
+      totalCount: count || 0,
+    }
+  } catch (error) {
+    console.error("Error fetching products:", error)
+    return { products: [], totalCount: 0 }
+  }
+}
+
+// Add a function to fetch top products
+const fetchTopProductsAPI = async (): Promise<ProductWithCategories[]> => {
+  try {
+    // Fetch top products ordered by priority
     const { data: products, error: productsError } = await supabase
       .from("products")
       .select("*")
-      .order("created_at", { ascending: false })
+      .eq("is_top_product", true)
+      .order("priority", { ascending: false })
 
     if (productsError) throw productsError
 
@@ -141,7 +214,7 @@ const fetchProductsAPI = async (): Promise<ProductWithCategories[]> => {
 
     return productsWithCategories
   } catch (error) {
-    console.error("Error fetching products:", error)
+    console.error("Error fetching top products:", error)
     return []
   }
 }
@@ -169,17 +242,38 @@ const createProductAPI = async (
   try {
     console.log("Creating product with data:", productData)
 
-    // First, create the product
-    const { data: product, error: productError } = await supabase.from("products").insert([productData]).select()
+    // Ensure required fields are present
+    if (!productData.name || !productData.selling_price || !productData.product_cost) {
+      console.error("Missing required fields for product creation")
+      throw new Error("Missing required fields: name, selling_price, and product_cost are required")
+    }
 
-    if (productError) throw productError
-    if (!product || product.length === 0) return null
+    // Remove profit_margin if it exists since it's a generated column
+    if ("profit_margin" in productData) {
+      delete productData.profit_margin
+    }
+
+    // Create a clean copy of the product data to avoid any reference issues
+    const cleanProductData = { ...productData }
+
+    // First, create the product
+    const { data: product, error: productError } = await supabase.from("products").insert([cleanProductData]).select()
+
+    if (productError) {
+      console.error("Error creating product:", productError)
+      throw productError
+    }
+
+    if (!product || product.length === 0) {
+      console.error("No product returned after insert")
+      return null
+    }
 
     const newProduct = product[0]
     console.log("Product created successfully:", newProduct)
 
     // Then, create the category relationships
-    if (categoryIds.length > 0) {
+    if (categoryIds && categoryIds.length > 0) {
       const categoryRelations = categoryIds.map((categoryId) => ({
         product_id: newProduct.id,
         category_id: categoryId,
@@ -188,8 +282,12 @@ const createProductAPI = async (
       console.log("Creating category relationships:", categoryRelations)
       const { error: relationError } = await supabase.from("product_categories").insert(categoryRelations)
 
-      if (relationError) throw relationError
-      console.log("Category relationships created successfully")
+      if (relationError) {
+        console.error("Error creating category relationships:", relationError)
+        // Don't throw here, we still want to return the product even if category relationships fail
+      } else {
+        console.log("Category relationships created successfully")
+      }
     }
 
     // Return the product with its categories
@@ -202,7 +300,7 @@ const createProductAPI = async (
     }
   } catch (error) {
     console.error("Error creating product:", error)
-    return null
+    throw error // Re-throw to allow proper handling in the calling function
   }
 }
 
@@ -219,6 +317,11 @@ const updateProductAPI = async (
   categoryIds: string[],
 ): Promise<ProductWithCategories | null> => {
   try {
+    // Remove profit_margin if it exists since it's a generated column
+    if ("profit_margin" in productData) {
+      delete productData.profit_margin
+    }
+
     // First, update the product
     const { data: product, error: productError } = await supabase
       .from("products")
@@ -459,7 +562,7 @@ const updateProductProfitCostAddon = async (product: ProductWithCategories) => {
   }
 }
 
-// Update the convertFormDataToProductData function to exclude category_ids
+// Update the convertFormDataToProductData function to handle data conversion more safely
 const convertFormDataToProductData = (formData: ProductFormData): Partial<Product> => {
   // Calculate profit margin
   const sellingPrice =
@@ -468,24 +571,56 @@ const convertFormDataToProductData = (formData: ProductFormData): Partial<Produc
   const productCost =
     typeof formData.product_cost === "string" ? Number.parseFloat(formData.product_cost) : formData.product_cost
 
-  return {
+  // Create a clean product object with only the fields we need
+  const productData: Partial<Product> = {
     name: formData.name,
     description: formData.description,
     selling_price: sellingPrice,
     product_cost: productCost,
-    is_locked: formData.is_locked,
-    images: formData.images,
-    stats: formData.stats,
-    specifications: formData.specifications,
-    is_top_product: formData.is_top_product,
-    priority: formData.priority,
+    // Remove profit_margin as it's a generated column
+    is_locked: formData.is_locked || (formData.release_time ? true : false), // Lock if release time is set
+    images: formData.images || [],
+    is_top_product: formData.is_top_product || false,
+    priority: formData.priority || 0,
   }
+
+  // Only add release_time if it's provided and valid
+  if (formData.release_time) {
+    try {
+      // Ensure it's a valid date
+      const releaseDate = new Date(formData.release_time)
+      if (!isNaN(releaseDate.getTime())) {
+        productData.release_time = releaseDate.toISOString()
+        // If release time is in the future, ensure the product is locked
+        if (releaseDate > new Date()) {
+          productData.is_locked = true
+        }
+      }
+    } catch (error) {
+      console.error("Invalid release_time:", error)
+      // Don't add the release_time if it's invalid
+    }
+  }
+
+  // Only include stats and specifications if they're provided
+  if (formData.stats) {
+    productData.stats = formData.stats
+  }
+
+  if (formData.specifications) {
+    productData.specifications = formData.specifications
+  }
+
+  return productData
 }
 
+// Add pagination state and logic to the AdminProducts component
 const AdminProducts: React.FC = () => {
   // State variables
   const [products, setProducts] = useState<ProductWithCategories[]>([])
+  const [topProducts, setTopProducts] = useState<ProductWithCategories[]>([])
   const [loading, setLoading] = useState<boolean>(true)
+  const [loadingTopProducts, setLoadingTopProducts] = useState<boolean>(true)
   const [uploading, setUploading] = useState<boolean>(false)
   const [selectedProducts, setSelectedProducts] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState<string>("")
@@ -495,6 +630,11 @@ const AdminProducts: React.FC = () => {
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
   const [categories, setCategories] = useState<Category[]>([])
   const [bucketReady, setBucketReady] = useState<boolean>(false)
+  const [showTopProductsTab, setShowTopProductsTab] = useState<boolean>(true)
+  // Add pagination state
+  const [currentPage, setCurrentPage] = useState<number>(1)
+  const [totalPages, setTotalPages] = useState<number>(1)
+  const [totalCount, setTotalCount] = useState<number>(0)
 
   // Local state for modal form
   const [formData, setFormData] = useState<ProductFormData>({
@@ -530,6 +670,7 @@ const AdminProducts: React.FC = () => {
     },
     is_top_product: false,
     priority: 0,
+    release_time: null, // Add this field
   })
   const [isEditing, setIsEditing] = useState<boolean>(false)
 
@@ -553,19 +694,63 @@ const AdminProducts: React.FC = () => {
   // Fetch products when component mounts
   useEffect(() => {
     ;(async () => {
-      const productsData = await fetchProductsAPI()
+      setLoading(true)
+      const { products: productsData, totalCount } = await fetchProductsAPI(currentPage)
       const categoriesData = await fetchCategoriesAPI()
+
       setProducts(productsData)
       setCategories(categoriesData)
+      setTotalCount(totalCount)
+      setTotalPages(Math.ceil(totalCount / PRODUCTS_PER_PAGE))
       setLoading(false)
     })()
+  }, [currentPage])
+
+  // Fetch top products
+  useEffect(() => {
+    ;(async () => {
+      setLoadingTopProducts(true)
+      const topProductsData = await fetchTopProductsAPI()
+      setTopProducts(topProductsData)
+      setLoadingTopProducts(false)
+    })()
   }, [])
+
+  // Add this function to the AdminProducts component
+  const refreshProductLocks = async () => {
+    try {
+      // Call the database function to refresh product locks
+      const { error } = await supabase.rpc("refresh_product_locks")
+
+      if (error) {
+        console.error("Error refreshing product locks:", error)
+        alert(`Error refreshing product locks: ${error.message}`)
+        return
+      }
+
+      // Refresh the products list
+      const { products: productsData, totalCount } = await fetchProductsAPI(currentPage)
+      setProducts(productsData)
+      setTotalCount(totalCount)
+      setTotalPages(Math.ceil(totalCount / PRODUCTS_PER_PAGE))
+
+      // Refresh top products
+      const topProductsData = await fetchTopProductsAPI()
+      setTopProducts(topProductsData)
+
+      alert("Product locks refreshed successfully")
+    } catch (error) {
+      console.error("Error refreshing product locks:", error)
+      alert(`Error: ${error.message || "Unknown error"}`)
+    }
+  }
 
   const handleDeleteProducts = async () => {
     if (!window.confirm("Are you sure you want to delete the selected products?")) return
     const success = await deleteMultipleProductsAPI(selectedProducts)
     if (success) {
       setProducts(products.filter((p) => !selectedProducts.includes(p.id)))
+      setTopProducts(topProducts.filter((p) => !selectedProducts.includes(p.id)))
       setSelectedProducts([])
     }
   }
@@ -579,6 +764,7 @@ const AdminProducts: React.FC = () => {
     const success = await deleteProductAPI(id)
     if (success) {
       setProducts(products.filter((p) => p.id !== id))
+      setTopProducts(topProducts.filter((p) => p.id !== id))
     }
   }
 
@@ -590,6 +776,7 @@ const AdminProducts: React.FC = () => {
     const updatedProduct = await toggleLockAPI(product)
     if (updatedProduct) {
       setProducts(products.map((p) => (p.id === product.id ? updatedProduct : p)))
+      setTopProducts(topProducts.map((p) => (p.id === product.id ? updatedProduct : p)))
     }
   }
 
@@ -606,7 +793,7 @@ const AdminProducts: React.FC = () => {
     })
   }
 
-  // Update the resetFormData function
+  // Update the resetFormData function to include release_time
   const resetFormData = () => {
     setFormData({
       name: "",
@@ -641,17 +828,11 @@ const AdminProducts: React.FC = () => {
       },
       is_top_product: false,
       priority: 0,
+      release_time: null, // Add this field
     })
     setIsEditing(false)
     setEditingProduct(null)
   }
-
-  /**
-   * Handle submission of the add product form.
-   */
-  // Remove these functions:
-  // const handleAddProduct = async (productFormData: ProductFormData): Promise<void> => { ... }
-  // const handleEditProduct = async (productFormData: ProductFormData): Promise<void> => { ... }
 
   /**
    * Handle image upload and update form data with image URLs.
@@ -740,11 +921,13 @@ const AdminProducts: React.FC = () => {
     }
   }
 
-  // Update the useEffect to handle categories from the product
+  // Update the useEffect to handle release_time from the product
   useEffect(() => {
     if (isEditing && editingProduct) {
       console.log("Editing product:", editingProduct)
-      setFormData({
+
+      // Create a copy of the editing product data
+      const formDataFromProduct = {
         name: editingProduct.name || "",
         description: editingProduct.description || "",
         selling_price: editingProduct.selling_price || "",
@@ -777,10 +960,27 @@ const AdminProducts: React.FC = () => {
             large: "",
           },
         },
-      })
+        release_time: null,
+      }
+
+      // Format the release_time for the datetime-local input if it exists
+      if (editingProduct.release_time) {
+        try {
+          const date = new Date(editingProduct.release_time)
+          if (!isNaN(date.getTime())) {
+            // Format as YYYY-MM-DDThh:mm (required format for datetime-local input)
+            formDataFromProduct.release_time = date.toISOString().slice(0, 16)
+          }
+        } catch (error) {
+          console.error("Error formatting release_time:", error)
+        }
+      }
+
+      setFormData(formDataFromProduct)
     }
   }, [isEditing, editingProduct])
 
+  // Update the ProductModal component to include release_time field
   const ProductModal = ({ isEdit = false }: { isEdit?: boolean }) => {
     // Create local state for the form to avoid state update issues
     const [localFormData, setLocalFormData] = useState<ProductFormData>(() => ({ ...formData }))
@@ -794,7 +994,17 @@ const AdminProducts: React.FC = () => {
     // Initialize local form data when modal opens or editing product changes
     useEffect(() => {
       console.log("Initializing form data:", formData)
-      setLocalFormData({ ...formData })
+      // Make a deep copy to avoid reference issues
+      const formDataCopy = JSON.parse(JSON.stringify(formData))
+
+      // Format the release_time for the datetime-local input if it exists
+      if (formDataCopy.release_time) {
+        // Convert to local ISO string and remove the seconds and timezone
+        const date = new Date(formDataCopy.release_time)
+        formDataCopy.release_time = date.toISOString().slice(0, 16)
+      }
+
+      setLocalFormData(formDataCopy)
     }, [isEdit, editingProduct])
 
     // Handle form submission with a direct approach
@@ -817,9 +1027,17 @@ const AdminProducts: React.FC = () => {
       setTimeout(() => {
         // Process the form submission directly
         try {
+          // Create a copy of the form data to process
+          const processedFormData = { ...localFormData }
+
+          // Convert the release_time from local datetime-local format to ISO string if it exists
+          if (processedFormData.release_time) {
+            processedFormData.release_time = new Date(processedFormData.release_time).toISOString()
+          }
+
           // Convert form data to product data
-          const productData = convertFormDataToProductData(localFormData)
-          const categoryIds = localFormData.category_ids
+          const productData = convertFormDataToProductData(processedFormData)
+          const categoryIds = processedFormData.category_ids
 
           console.log("Processing submission:", isEdit ? "edit" : "add")
 
@@ -839,6 +1057,22 @@ const AdminProducts: React.FC = () => {
                   updateProductProfitCostAddon(updated).then(() => {
                     // Update the products list
                     setProducts((prevProducts) => prevProducts.map((p) => (p.id === editingProduct.id ? updated : p)))
+
+                    // Update top products list if needed
+                    if (updated.is_top_product) {
+                      setTopProducts((prevTopProducts) => {
+                        // Check if product is already in top products
+                        const exists = prevTopProducts.some((p) => p.id === updated.id)
+                        if (exists) {
+                          return prevTopProducts.map((p) => (p.id === updated.id ? updated : p))
+                        } else {
+                          return [...prevTopProducts, updated]
+                        }
+                      })
+                    } else {
+                      // Remove from top products if it's no longer a top product
+                      setTopProducts((prevTopProducts) => prevTopProducts.filter((p) => p.id !== updated.id))
+                    }
 
                     // Reset form and close modal
                     resetFormData()
@@ -870,6 +1104,11 @@ const AdminProducts: React.FC = () => {
                     // Update the products list
                     setProducts((prevProducts) => [newProduct, ...prevProducts])
 
+                    // Add to top products if it's a top product
+                    if (newProduct.is_top_product) {
+                      setTopProducts((prevTopProducts) => [...prevTopProducts, newProduct])
+                    }
+
                     // Reset form and close modal
                     resetFormData()
                     setShowAddModal(false)
@@ -881,7 +1120,14 @@ const AdminProducts: React.FC = () => {
               })
               .catch((error) => {
                 console.error("Error in handleAddProduct:", error)
-                alert(`Error adding product: ${error.message || "Unknown error"}`)
+                // Show a more detailed error message
+                if (error.code) {
+                  // This is a Supabase error
+                  alert(`Database error (${error.code}): ${error.message || "Unknown error"}`)
+                } else {
+                  // This is a general error
+                  alert(`Error adding product: ${error.message || "Unknown error"}`)
+                }
               })
               .finally(() => {
                 // Reset submission state
@@ -1050,6 +1296,67 @@ const AdminProducts: React.FC = () => {
                   />
                 </div>
 
+                {/* Add release scheduling section */}
+                <div className="border border-gray-200 rounded-lg p-4 bg-white">
+                  <h4 className="text-md font-medium mb-3">Release Scheduling</h4>
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="is_locked"
+                        checked={localFormData.is_locked || false}
+                        onChange={(e) => setLocalFormData({ ...localFormData, is_locked: e.target.checked })}
+                        disabled={isSubmitting}
+                      />
+                      <label htmlFor="is_locked">Lock Product (Only Pro users can access)</label>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Schedule Release (When should this product be available to free users?)
+                      </label>
+                      <input
+                        type="datetime-local"
+                        value={localFormData.release_time || ""}
+                        onChange={(e) => setLocalFormData({ ...localFormData, release_time: e.target.value })}
+                        className="border p-2 w-full rounded-md"
+                        disabled={isSubmitting}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Leave empty for immediate release. Pro users can access locked products immediately.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="is_top_product"
+                        checked={localFormData.is_top_product || false}
+                        onChange={(e) => setLocalFormData({ ...localFormData, is_top_product: e.target.checked })}
+                        disabled={isSubmitting}
+                      />
+                      <label htmlFor="is_top_product">Top Product (Always locked for free users)</label>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Priority (For ordering top products)
+                      </label>
+                      <input
+                        type="number"
+                        placeholder="Priority"
+                        value={localFormData.priority}
+                        onChange={(e) => setLocalFormData({ ...localFormData, priority: Number(e.target.value) })}
+                        className="border p-2 w-full rounded-md"
+                        disabled={isSubmitting}
+                      />
+                      <p className="text-xs text-gray-500 mt-1">
+                        Higher numbers appear first in the top products section.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
                 {/* Multi-select component for categories */}
                 <div className="space-y-2">
                   <label className="block text-sm font-medium text-gray-700">Categories</label>
@@ -1084,24 +1391,6 @@ const AdminProducts: React.FC = () => {
                   </div>
                   {categories.length === 0 && <p className="text-sm text-gray-500">No categories available</p>}
                 </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={localFormData.is_top_product || false}
-                    onChange={(e) => setLocalFormData({ ...localFormData, is_top_product: e.target.checked })}
-                    disabled={isSubmitting}
-                  />
-                  <label>Top Product</label>
-                </div>
-                <input
-                  type="number"
-                  placeholder="Priority"
-                  value={localFormData.priority}
-                  onChange={(e) => setLocalFormData({ ...localFormData, priority: Number(e.target.value) })}
-                  className="border p-2 mb-2 w-full"
-                  disabled={isSubmitting}
-                />
               </div>
             </div>
             {/* Images Section */}
@@ -1227,108 +1516,63 @@ const AdminProducts: React.FC = () => {
     )
   }
 
-  return (
-    <div className="p-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Products</h1>
-          <p className="text-gray-600">Manage your product catalog</p>
+  // Render the Top Products Queue section
+  const TopProductsQueue = () => {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-8">
+        <div className="p-4 border-b border-gray-200 bg-gray-50">
+          <h2 className="text-lg font-semibold">Top Products Queue (Pro Users Only)</h2>
+          <p className="text-sm text-gray-600">
+            The top 6 products are always locked for free users. Additional top products will be automatically released
+            on a weekly schedule.
+          </p>
         </div>
-        <div className="flex gap-2">
-          {selectedProducts.length > 0 && (
-            <button
-              onClick={handleDeleteProducts}
-              className="inline-flex items-center justify-center bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-            >
-              <Trash2 className="h-5 w-5 mr-2" />
-              Delete Selected
-            </button>
-          )}
-          <button
-            onClick={() => {
-              resetFormData()
-              setShowAddModal(true)
-            }}
-            className="inline-flex items-center justify-center bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >
-            <Plus className="h-5 w-5 mr-2" />
-            Add Product
-          </button>
-        </div>
-      </div>
-
-      {/* Filters Section */}
-      <div className="flex flex-col sm:flex-row gap-4 mb-6">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-          <input
-            type="text"
-            placeholder="Search products..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
-          />
-        </div>
-        <button className="inline-flex items-center justify-center px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
-          <Filter className="h-5 w-5 mr-2" />
-          Filters
-        </button>
-      </div>
-
-      {/* Products Table */}
-      <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-200">
-                <th className="px-6 py-3 text-left">
-                  <input
-                    type="checkbox"
-                    className="rounded border-gray-300 text-primary focus:ring-primary"
-                    onChange={(e) => {
-                      if (e.target.checked) {
-                        setSelectedProducts(products.map((p) => p.id))
-                      } else {
-                        setSelectedProducts([])
-                      }
-                    }}
-                  />
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Product
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Price
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Margin
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-200">
-              {products.map((product) => (
-                <React.Fragment key={product.id}>
-                  <tr className="hover:bg-gray-50">
+          {loadingTopProducts ? (
+            <div className="flex justify-center items-center p-8">
+              <Loader2 className="h-8 w-8 text-gray-400 animate-spin" />
+            </div>
+          ) : topProducts.length === 0 ? (
+            <div className="p-8 text-center">
+              <p className="text-gray-500">No top products found. Add products and mark them as "Top Product".</p>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-200">
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Position
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Product
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Priority
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Release Date
+                  </th>
+                  <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {topProducts.map((product, index) => (
+                  <tr key={product.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4">
-                      <input
-                        type="checkbox"
-                        className="rounded border-gray-300"
-                        checked={selectedProducts.includes(product.id)}
-                        onChange={(e) => {
-                          if (e.target.checked) {
-                            setSelectedProducts([...selectedProducts, product.id])
-                          } else {
-                            setSelectedProducts(selectedProducts.filter((id) => id !== product.id))
-                          }
-                        }}
-                      />
+                      <div className="flex items-center">
+                        <span
+                          className={`inline-flex items-center justify-center h-6 w-6 rounded-full ${
+                            index < 6 ? "bg-purple-100 text-purple-800" : "bg-gray-100 text-gray-800"
+                          } text-xs font-medium`}
+                        >
+                          {index + 1}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center">
@@ -1349,9 +1593,9 @@ const AdminProducts: React.FC = () => {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">${Number.parseFloat(product.selling_price.toString()).toFixed(2)}</td>
-                    <td className="px-6 py-4">${Number.parseFloat(product.product_cost.toString()).toFixed(2)}</td>
-                    <td className="px-6 py-4">${Number.parseFloat(product.profit_margin.toString()).toFixed(2)}</td>
+                    <td className="px-6 py-4">
+                      <span className="text-sm font-medium">{product.priority}</span>
+                    </td>
                     <td className="px-6 py-4">
                       <span
                         className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
@@ -1361,18 +1605,23 @@ const AdminProducts: React.FC = () => {
                         {product.is_locked ? "Locked" : "Active"}
                       </span>
                     </td>
+                    <td className="px-6 py-4">
+                      {product.release_time ? (
+                        <div className="text-sm">
+                          <div className="font-medium">{new Date(product.release_time).toLocaleDateString()}</div>
+                          <div className="text-gray-500">
+                            {new Date(product.release_time).toLocaleTimeString([], {
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-sm text-gray-500">No release date</span>
+                      )}
+                    </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <button
-                          onClick={() => toggleLock(product)}
-                          className={`p-1.5 transition-colors ${
-                            product.is_locked
-                              ? "text-yellow-500 hover:bg-yellow-50"
-                              : "text-green-500 hover:bg-green-50"
-                          }`}
-                        >
-                          {product.is_locked ? <Lock size={18} /> : <Unlock size={18} />}
-                        </button>
                         <button
                           onClick={() => {
                             setIsEditing(true)
@@ -1389,126 +1638,396 @@ const AdminProducts: React.FC = () => {
                         >
                           <Trash2 size={18} />
                         </button>
-                        <button
-                          onClick={() => toggleRowExpansion(product.id)}
-                          className={`p-1.5 text-gray-400 hover:bg-gray-50 rounded-lg transition-colors ${
-                            expandedRows.has(product.id) ? "bg-gray-100" : ""
-                          }`}
-                        >
-                          <ChevronDown
-                            size={18}
-                            className={`transform transition-transform ${
-                              expandedRows.has(product.id) ? "rotate-180" : ""
-                            }`}
-                          />
-                        </button>
                       </div>
                     </td>
                   </tr>
-                  {expandedRows.has(product.id) && (
-                    <tr className="bg-gray-50">
-                      <td colSpan={7} className="px-6 py-4">
-                        <div className="grid grid-cols-3 gap-6">
-                          {/* Statistics */}
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">Statistics</h4>
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Engagement:</span>
-                                <span className="font-medium">{product.stats?.engagement || "N/A"}</span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">FB Ads:</span>
-                                <span className="font-medium">{product.stats?.fbAds || "N/A"}</span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Search Volume:</span>
-                                <span className="font-medium">
-                                  {product.stats?.searchVolume?.monthly?.toLocaleString() || "N/A"}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          {/* Orders */}
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">Aliexpress Orders</h4>
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Daily:</span>
-                                <span className="font-medium">
-                                  {product.stats?.aliexpressOrders?.daily?.toLocaleString() || "N/A"}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Weekly:</span>
-                                <span className="font-medium">
-                                  {product.stats?.aliexpressOrders?.weekly?.toLocaleString() || "N/A"}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Monthly:</span>
-                                <span className="font-medium">
-                                  {product.stats?.aliexpressOrders?.monthly?.toLocaleString() || "N/A"}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          {/* Specifications */}
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">Specifications</h4>
-                            <div className="space-y-2">
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Material:</span>
-                                <span className="font-medium">{product.specifications?.material || "N/A"}</span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Small Size:</span>
-                                <span className="font-medium">
-                                  {product.specifications?.dimensions?.small || "N/A"}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between text-sm">
-                                <span className="text-gray-500">Large Size:</span>
-                                <span className="font-medium">
-                                  {product.specifications?.dimensions?.large || "N/A"}
-                                </span>
-                              </div>
-                            </div>
-                          </div>
-                          {/* Categories */}
-                          <div>
-                            <h4 className="text-sm font-medium text-gray-900 mb-2">Categories</h4>
-                            <div className="space-y-2">
-                              {product.categories && product.categories.length > 0 ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {product.categories.map((category) => (
-                                    <span
-                                      key={category.id}
-                                      className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full"
-                                    >
-                                      {category.name}
-                                    </span>
-                                  ))}
-                                </div>
-                              ) : (
-                                <span className="text-sm text-gray-500">No categories assigned</span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Products</h1>
+          <p className="text-gray-600">Manage your product catalog</p>
+        </div>
+        <div className="flex gap-2">
+          {selectedProducts.length > 0 && (
+            <button
+              onClick={handleDeleteProducts}
+              className="inline-flex items-center justify-center bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+            >
+              <Trash2 className="h-5 w-5 mr-2" />
+              Delete Selected
+            </button>
+          )}
+          <button
+            onClick={refreshProductLocks}
+            className="inline-flex items-center justify-center bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          >
+            <Lock className="h-5 w-5 mr-2" />
+            Refresh Locks
+          </button>
+          <button
+            onClick={() => {
+              resetFormData()
+              setShowAddModal(true)
+            }}
+            className="inline-flex items-center justify-center bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          >
+            <Plus className="h-5 w-5 mr-2" />
+            Add Product
+          </button>
         </div>
       </div>
 
-      {/* Modals for Adding and Editing Products */}
-      {showAddModal && <ProductModal isEdit={false} />}
-      {showEditModal && <ProductModal isEdit={true} />}
+      {/* Tab buttons */}
+      <div className="flex border-b border-gray-200 mb-6">
+        <button
+          onClick={() => setShowTopProductsTab(true)}
+          className={`px-4 py-2 font-medium text-sm ${
+            showTopProductsTab ? "text-primary border-b-2 border-primary" : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          <Star className="inline-block h-4 w-4 mr-1" />
+          Top Products Queue
+        </button>
+        <button
+          onClick={() => setShowTopProductsTab(false)}
+          className={`px-4 py-2 font-medium text-sm ${
+            !showTopProductsTab ? "text-primary border-b-2 border-primary" : "text-gray-500 hover:text-gray-700"
+          }`}
+        >
+          <Calendar className="inline-block h-4 w-4 mr-1" />
+          All Products
+        </button>
+      </div>
+
+      {/* Show either Top Products Queue or All Products based on tab selection */}
+      {showTopProductsTab ? (
+        <TopProductsQueue />
+      ) : (
+        <>
+          {/* Filters Section */}
+          <div className="flex flex-col sm:flex-row gap-4 mb-6">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+              <input
+                type="text"
+                placeholder="Search products..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+              />
+            </div>
+            <button className="inline-flex items-center justify-center px-4 py-2 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
+              <Filter className="h-5 w-5 mr-2" />
+              Filters
+            </button>
+          </div>
+
+          {/* Products Table */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200">
+                    <th className="px-6 py-3 text-left">
+                      <input
+                        type="checkbox"
+                        className="rounded border-gray-300 text-primary focus:ring-primary"
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedProducts(products.map((p) => p.id))
+                          } else {
+                            setSelectedProducts([])
+                          }
+                        }}
+                      />
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Product
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Price
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Cost
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Margin
+                    </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Status
+                    </th>
+                    <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {products.map((product) => (
+                    <React.Fragment key={product.id}>
+                      {/* Update the products table to display release time */}
+                      <tr className="hover:bg-gray-50">
+                        <td className="px-6 py-4">
+                          <input
+                            type="checkbox"
+                            className="rounded border-gray-300"
+                            checked={selectedProducts.includes(product.id)}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedProducts([...selectedProducts, product.id])
+                              } else {
+                                setSelectedProducts(selectedProducts.filter((id) => id !== product.id))
+                              }
+                            }}
+                          />
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center">
+                            <div className="h-10 w-10 rounded-lg bg-gray-100 mr-3">
+                              {product.images?.[0] && (
+                                <img
+                                  src={product.images[0] || "/placeholder.svg"}
+                                  alt={product.name}
+                                  className="h-10 w-10 rounded-lg object-cover"
+                                />
+                              )}
+                            </div>
+                            <div>
+                              <div className="text-sm font-medium">{product.name}</div>
+                              <div className="text-sm text-gray-500">
+                                {new Date(product.created_at).toLocaleDateString()}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">${Number.parseFloat(product.selling_price.toString()).toFixed(2)}</td>
+                        <td className="px-6 py-4">${Number.parseFloat(product.product_cost.toString()).toFixed(2)}</td>
+                        <td className="px-6 py-4">${Number.parseFloat(product.profit_margin.toString()).toFixed(2)}</td>
+                        <td className="px-6 py-4">
+                          <span
+                            className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                              product.is_locked ? "bg-yellow-100 text-yellow-800" : "bg-green-100 text-green-800"
+                            }`}
+                          >
+                            {product.is_locked ? "Locked" : "Active"}
+                          </span>
+                          {product.release_time && new Date(product.release_time) > new Date() && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              Releases: {new Date(product.release_time).toLocaleString()}
+                            </div>
+                          )}
+                          {product.is_top_product && (
+                            <span className="ml-1 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-purple-100 text-purple-800">
+                              Top
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-right">
+                          <div className="flex items-center justify-end gap-2">
+                            <button
+                              onClick={() => toggleLock(product)}
+                              className={`p-1.5 transition-colors ${
+                                product.is_locked
+                                  ? "text-yellow-500 hover:bg-yellow-50"
+                                  : "text-green-500 hover:bg-green-50"
+                              }`}
+                            >
+                              {product.is_locked ? <Lock size={18} /> : <Unlock size={18} />}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setIsEditing(true)
+                                setEditingProduct(product)
+                                setShowEditModal(true)
+                              }}
+                              className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors"
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteProduct(product.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                            <button
+                              onClick={() => toggleRowExpansion(product.id)}
+                              className={`p-1.5 text-gray-400 hover:bg-gray-50 rounded-lg transition-colors ${
+                                expandedRows.has(product.id) ? "bg-gray-100" : ""
+                              }`}
+                            >
+                              <ChevronDown
+                                size={18}
+                                className={`transform transition-transform ${
+                                  expandedRows.has(product.id) ? "rotate-180" : ""
+                                }`}
+                              />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {expandedRows.has(product.id) && (
+                        <tr className="bg-gray-50">
+                          <td colSpan={7} className="px-6 py-4">
+                            <div className="grid grid-cols-3 gap-6">
+                              {/* Statistics */}
+                              <div>
+                                <h4 className="text-sm font-medium text-gray-900 mb-2">Statistics</h4>
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Engagement:</span>
+                                    <span className="font-medium">{product.stats?.engagement || "N/A"}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">FB Ads:</span>
+                                    <span className="font-medium">{product.stats?.fbAds || "N/A"}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Search Volume:</span>
+                                    <span className="font-medium">
+                                      {product.stats?.searchVolume?.monthly?.toLocaleString() || "N/A"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              {/* Orders */}
+                              <div>
+                                <h4 className="text-sm font-medium text-gray-900 mb-2">Aliexpress Orders</h4>
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Daily:</span>
+                                    <span className="font-medium">
+                                      {product.stats?.aliexpressOrders?.daily?.toLocaleString() || "N/A"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Weekly:</span>
+                                    <span className="font-medium">
+                                      {product.stats?.aliexpressOrders?.weekly?.toLocaleString() || "N/A"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Monthly:</span>
+                                    <span className="font-medium">
+                                      {product.stats?.aliexpressOrders?.monthly?.toLocaleString() || "N/A"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              {/* Specifications */}
+                              <div>
+                                <h4 className="text-sm font-medium text-gray-900 mb-2">Specifications</h4>
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Material:</span>
+                                    <span className="font-medium">{product.specifications?.material || "N/A"}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Small Size:</span>
+                                    <span className="font-medium">
+                                      {product.specifications?.dimensions?.small || "N/A"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm">
+                                    <span className="text-gray-500">Large Size:</span>
+                                    <span className="font-medium">
+                                      {product.specifications?.dimensions?.large || "N/A"}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                              {/* Categories */}
+                              <div>
+                                <h4 className="text-sm font-medium text-gray-900 mb-2">Categories</h4>
+                                <div className="space-y-2">
+                                  {product.categories && product.categories.length > 0 ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      {product.categories.map((category) => (
+                                        <span
+                                          key={category.id}
+                                          className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full"
+                                        >
+                                          {category.name}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  ) : (
+                                    <span className="text-sm text-gray-500">No categories assigned</span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Modals for Adding and Editing Products */}
+          {showAddModal && <ProductModal isEdit={false} />}
+          {showEditModal && <ProductModal isEdit={true} />}
+
+          {/* Pagination */}
+          <div className="flex justify-between items-center mt-6">
+            <p className="text-sm text-gray-700">
+              Showing <span className="font-medium">{(currentPage - 1) * PRODUCTS_PER_PAGE + 1}</span> to{" "}
+              <span className="font-medium">{Math.min(currentPage * PRODUCTS_PER_PAGE, totalCount)}</span> of{" "}
+              <span className="font-medium">{totalCount}</span> Products
+            </p>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setCurrentPage((prev) => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 rounded-md border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentPage((prev) => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 rounded-md border border-gray-300 hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+
+          {/* Pagination Numbers */}
+          {totalPages > 1 && (
+            <div className="flex justify-center mt-8 gap-2">
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((page) => (
+                <button
+                  key={page}
+                  onClick={() => setCurrentPage(page)}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    currentPage === page ? "bg-primary text-white" : "bg-white text-gray-600 hover:bg-gray-50"
+                  }`}
+                >
+                  {page}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Total Products Count */}
+          <div className="text-center mt-6 text-sm text-gray-500">
+            Showing {products.length} of {totalCount} products
+          </div>
+        </>
+      )}
     </div>
   )
 }
